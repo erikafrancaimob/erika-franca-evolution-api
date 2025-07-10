@@ -35,12 +35,10 @@ async function startSock() {
 
 startSock();
 
-// Teste simples da API
 app.get("/", (req, res) => {
     res.send("🚀 Erika França - API WhatsApp online");
 });
 
-// Enviar mensagem via API
 app.post("/send", async (req, res) => {
     const { number, message } = req.body;
     if (!number || !message) return res.status(400).send("number e message são obrigatórios");
