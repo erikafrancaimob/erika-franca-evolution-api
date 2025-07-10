@@ -1,4 +1,4 @@
-const { default: makeWASocket, useSingleFileAuthState } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useSingleFileAuthState } = require('@adiwajshing/baileys');
 const express = require('express');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs');
