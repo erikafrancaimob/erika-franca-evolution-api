@@ -1,93 +1,110 @@
-// index.js
 require('dotenv').config();
-const { default: makeWASocket, useSingleFileAuthState } = require('@adiwajshing/baileys');
 const express = require('express');
+const { default: makeWASocket, useSingleFileAuthState } = require('@adiwajshing/baileys');
 const qrcode = require('qrcode-terminal');
-const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
+const { createClient } = require('@supabase/supabase-js');
+const { OpenAI } = require('openai');
+const cors = require('cors');
 
-// auth: WhatsApp
-const { state, saveState } = useSingleFileAuthState('./auth_info.json');
-let sock;
-
-// Supabase Client
-const SUPABASE_URL   = process.env.SUPABASE_URL;
-const SUPABASE_KEY   = process.env.SUPABASE_ANON_KEY;
-const supabase       = createClient(SUPABASE_URL, SUPABASE_KEY);
-
-// Express App
+// Inicialização
 const app = express();
+app.use(cors());
 app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
-// Função para iniciar a conexão WhatsApp
+// Supabase
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+
+// OpenAI
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// WhatsApp
+const { state, saveState } = useSingleFileAuthState('./auth_info.json');
+let sock;
+let lastQR = '';
+
+// Conectar WhatsApp
 async function startSock() {
   sock = makeWASocket({ auth: state, printQRInTerminal: false });
-
   sock.ev.on('creds.update', saveState);
   sock.ev.on('connection.update', ({ connection, qr }) => {
     if (qr) {
-      console.log('📲 Novo QR gerado. Acesse /qr para visualizar no navegador.');
-      qrcode.generate(qr, { small: true });
-      // opcional: armazenar qr para rota /qr
+      lastQR = qr;
+      console.log('📲 Novo QR gerado. Acesse /qr');
       fs.writeFileSync('./last_qr.txt', qr);
     }
     if (connection === 'open') console.log('✅ Conectado ao WhatsApp!');
     if (connection === 'close') {
-      console.log('❌ Conexão encerrada. Reiniciando...');
+      console.log('❌ Conexão encerrada. Tentando reconectar...');
       startSock();
     }
   });
 }
 startSock();
 
-// Rota raiz
-app.get('/', (_req, res) => {
-  res.send('🚀 Erika França - API WhatsApp & Imóveis online');
+// Rota status
+app.get("/", (_req, res) => {
+  res.send("🚀 API da Erika França Imobiliária online com IA");
 });
 
-// Rota QR para navegador
-app.get('/qr', (_req, res) => {
+// Rota QR
+app.get("/qr", (_req, res) => {
   try {
     const qr = fs.readFileSync('./last_qr.txt', 'utf8');
     res.set('Content-Type', 'text/plain');
     res.send(qrcode.generate(qr, { small: true, output: 'terminal' }));
   } catch {
-    res.send('QR code não gerado ainda. Faça redeploy.');
+    res.send('QR code ainda não gerado. Aguarde ou redeploy.');
   }
 });
 
-// Rota de listagem de imóveis no Supabase
-app.get('/imoveis', async (_req, res) => {
+// Rota imóveis
+app.get("/imoveis", async (_req, res) => {
   try {
     const { data, error } = await supabase
-      .from('properties')
-      .select('property_code, title, price, images')
-      .eq('status', 'disponível')
-      .order('property_code', { ascending: true });
+      .from("properties")
+      .select("property_code, title, price, images")
+      .eq("status", "disponível")
+      .order("property_code", { ascending: true });
 
     if (error) return res.status(500).json({ error: error.message });
-    return res.json(data);
+    res.json(data);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// Endpoint para enviar mensagem via WhatsApp
-app.post('/send', async (req, res) => {
+// Enviar mensagem via WhatsApp
+app.post("/send", async (req, res) => {
   const { number, message } = req.body;
-  if (!number || !message)
-    return res.status(400).send('number e message são obrigatórios');
+  if (!number || !message) return res.status(400).send("Campos 'number' e 'message' são obrigatórios.");
+  try {
+    await sock.sendMessage(`${number}@s.whatsapp.net`, { text: message });
+    res.send("Mensagem enviada com sucesso!");
+  } catch (err) {
+    res.status(500).send("Erro ao enviar mensagem: " + err.message);
+  }
+});
+
+// Rota com IA da OpenAI
+app.post("/mensagem", async (req, res) => {
+  const { pergunta } = req.body;
+  if (!pergunta) return res.status(400).json({ erro: "Campo 'pergunta' é obrigatório." });
 
   try {
-    await sock.sendMessage(number + '@s.whatsapp.net', { text: message });
-    return res.send('Mensagem enviada com sucesso!');
+    const resposta = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        { role: "system", content: "Você é uma assistente de atendimento humanizado da Imobiliária Erika França. Responda com empatia, simpatia e clareza." },
+        { role: "user", content: pergunta }
+      ]
+    });
+    res.json({ resposta: resposta.choices[0].message.content });
   } catch (err) {
-    return res.status(500).send('Erro ao enviar mensagem: ' + err.message);
+    res.status(500).json({ erro: "Erro ao consultar IA: " + err.message });
   }
 });
 
-// Inicia servidor
-app.listen(PORT, () => {
-  console.log(`🟢 API rodando na porta ${PORT}`);
-});
+// Iniciar servidor
+app.listen(PORT, () => console.log(`🟢 Servidor com IA rodando na porta ${PORT}`));
